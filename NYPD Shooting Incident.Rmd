@@ -1,0 +1,178 @@
+---
+title: "NYPD Shooting Incident"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+## OVERVIEW
+
+Two years of the pandemic worsened a mental-health crisis among the people in USA; over the same period, shootings have risen sharply. This has taken a deep toll on people, both those who have taken bullets and those in their orbit who have watched the aftermath.
+
+This code ***imports, cleans, transforms and creates simple visualizations in R*** on the NYPD Shooting Incident Data to demonstrate different data science steps.
+
+The data comes from the NYPD website that is available to the public to explore the nature of the activity/crime. The data is available for download [here](https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD).
+
+## LIBRARIES  
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)  
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+```
+ 
+
+## IMPORTING THE DATA
+
+The source is a csv file available on the NYPD website. This can be downloaded at the location specified above.
+
+```{r Import}
+
+NYPD_Shooting_Incidents_Data <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"  
+nypd_csvData <- read_csv(NYPD_Shooting_Incidents_Data)  
+```
+
+## TIDYING AND TRANSFORMING
+
+Tidying and transforming involves removing the "errors" as well as adapting it for our own use. The following letters are used to refer the code snippets involved.  
+
+**a** - *OCCUR_DATE is standardized to date*   
+**b** - *We will only be looking at data for the past 3 complete years*  
+**c** - *Any columns not used for the purpose of this project is removed*  
+**d** - *We will remove any rows that does not have a PERP_AGE_GROUP*  
+ 
+
+
+```{r TidyTransform}  
+# a
+nypd_csvData <- nypd_csvData %>% mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+
+# b
+nypd_csvData <- nypd_csvData %>% filter(OCCUR_DATE>="2019-01-01") 
+
+# c  
+nypd_csvData <- nypd_csvData %>% select(-OCCUR_TIME,-BORO,-PRECINCT,-JURISDICTION_CODE,-PERP_RACE,-PERP_SEX,-VIC_SEX,-VIC_RACE,-X_COORD_CD,-Y_COORD_CD,-Latitude,-Longitude,-Lon_Lat)
+
+# d  
+nypd_csvData <- nypd_csvData %>% drop_na(PERP_AGE_GROUP)  
+#2219 rows were dropped of from a total of 4926 rows
+```
+
+## VISUALIZATION  
+
+For the first plot, we will look at **perpetrator’s age within a category vs the number of incidents reported.**  
+
+``` {r Perp_Age_Visual}  
+nypd_csvData_by_perpAge <- nypd_csvData %>% group_by(PERP_AGE_GROUP)%>%
+mutate(Incidents = n())  
+
+nypd_csvData_by_perpAge_Plot <- nypd_csvData_by_perpAge %>% group_by(PERP_AGE_GROUP)%>%
+summarize(Incidents = max(Incidents))  
+
+nypd_csvData_by_perpAge_Plot  
+
+nypd_csvData_by_perpAge_Plot %>% ggplot(aes(x=PERP_AGE_GROUP, y=Incidents))+ geom_bar(stat="identity", fill="steelblue")
+
+```
+
+For the second plot, we will look at **victim's age within a category vs the number of incidents reported.**  
+
+```{r Victim_Age_Visual}
+nypd_csvData_by_VicAge <- nypd_csvData %>% group_by(VIC_AGE_GROUP)%>%
+mutate(Incidents = n())  
+
+nypd_csvData_by_VicAge_Plot <- nypd_csvData_by_VicAge %>%
+group_by(VIC_AGE_GROUP)%>%
+summarize(Incidents = max(Incidents))  
+
+nypd_csvData_by_VicAge_Plot  
+
+nypd_csvData_by_VicAge_Plot %>% ggplot(aes(x=VIC_AGE_GROUP, y=Incidents))+ geom_segment(aes(x = VIC_AGE_GROUP, xend = VIC_AGE_GROUP, y = 0, yend = Incidents)) +
+geom_point(color = "indianred4", size = 4)
+
+```  
+
+## ANALYZING DATA  
+
+Let us now analyze the data further to examine the rate at which the incidents increased/decreased over the past year for the age group that had the highest number of victims (25-44; as identified using data visualization).  
+Has the incidents been steady over the past year ?  
+Which months had the highest incidents reported ?  
+Is there a huge difference in number of incidents between the months ?  
+
+```{r IncidentTrend2021}
+
+nypd_csvData_Incidents <- nypd_csvData %>%
+filter(year(OCCUR_DATE)==2021 & PERP_AGE_GROUP=="25-44")  
+
+nypd_csvData_Incidents_plot <- nypd_csvData_Incidents %>%
+mutate(OCCUR_Month = month(OCCUR_DATE))  
+
+nypd_csvData_Incidents_plot <- nypd_csvData_Incidents_plot %>%
+group_by(OCCUR_Month)%>%
+summarise(Incidents = n(), Deaths = sum(STATISTICAL_MURDER_FLAG)) 
+
+nypd_csvData_Incidents_plot <- nypd_csvData_Incidents_plot %>%
+mutate(OCCUR_MonthName = month(OCCUR_Month,label = TRUE, abbr = TRUE))
+
+nypd_csvData_Incidents_plot  
+
+nypd_csvData_Incidents_plot %>% ggplot(aes(x=OCCUR_MonthName, y=Incidents, group = 1))+geom_line(color="darkslategrey")
+
+```  
+
+We have concluded that :  
+
+The shooting incidents tend to increase between the months March and August and tends to decrease between September and February.  
+May reported the highest shootings whereas January and February reported the least.  
+There is almost 69% decrease in shootings in May vs January and February.  
+
+## MODELING THE DATA  
+
+A linear regression is a statistical model that analyzes the relationship between a response variable (often called y) and one or more variables and their interactions (often called x or explanatory variables). You make this kind of relationships in your head all the time, for example when you calculate the age of a child based on her height, you are assuming the older she is, the taller she will be.  
+
+Similarly, we can assume that as the **number of incidents increases, the death rate also increases.**  
+
+```{r LinearRegression}
+mod <- lm(Deaths ~ Incidents, data = nypd_csvData_Incidents_plot)  
+
+summary(mod)  
+
+nypd_csvData_Incidents_Pred <- nypd_csvData_Incidents_plot %>%
+mutate(pred = predict(mod))  
+
+nypd_csvData_Incidents_Pred %>% ggplot() + geom_point(aes(x=Incidents, y=Deaths),color="black") + geom_point(aes(x=Incidents, y=pred),color = "red")  
+```
+
+## BIAS AREAS  
+
+From the above model we can conclude that apart from a few outliers, our model somewhat predicts that as the incidents increases, the deaths also increases. Below are a few biases that could have affected our analysis :  
+
+1. During tidy and transform, we had omitted rows that had NA values for the PERP_AGE_GROUP. This might have affected the model as more data means more accurate results.    
+
+2. The victim's age group considered for analysis, 25-44 is a vast age group. It may be possible that the victims at the lower end of age group may be at a better position to defend/survive the shooting than someone at the higher end. Underlying health conditions can contribute towards survival rate, which is usually observed for higher age groups.  
+
+
+
+
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
